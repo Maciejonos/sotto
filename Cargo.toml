@@ -1,0 +1,12 @@
+[package]
+name = "sotto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gtk = { version = "0.10.3", package = "gtk4" }
+adw = { version = "0.8.1", package = "libadwaita" }
+whisper-rs = "0.15.1"
+ureq = "3.1.4"
+dirs = "6.0.0"
+libc = "0.2.178"
