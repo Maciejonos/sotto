@@ -2,6 +2,11 @@
 name = "sotto"
 version = "0.1.0"
 edition = "2024"
+description = "Local speech-to-text transcription for Linux/Wayland using Whisper"
+license = "MIT"
+repository = "https://github.com/Maciejonos/sotto"
+keywords = ["whisper", "transcription", "speech-to-text", "wayland", "gtk"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 gtk = { version = "0.10.3", package = "gtk4" }
