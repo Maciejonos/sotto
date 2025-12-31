@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Sotto
+Comment=Local speech-to-text transcription
+Exec=sotto
+Icon=sotto
+Terminal=false
+Type=Application
+Categories=Audio;Utility;GTK;
+Keywords=speech;voice;transcription;whisper;dictation;

@@ -2,3 +2,4 @@ target/
 *.pkg.tar.zst
 pkg/
 src/*.tar.gz
+CLAUDE.md

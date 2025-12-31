@@ -8,45 +8,102 @@ Sotto runs entirely offline — your voice never leaves your machine. It uses [w
 
 ## Features
 
-- **Click-to-record** — visual feedback while recording
+- **GUI + Daemon modes** — use the app or a global hotkey
 - **Fully local** — no cloud services, no API keys, no internet required
-- **12 Whisper models to download** — from Tiny (78 MB) to Large-v3 (3.1 GB)
+- **GPU accelerated** — Vulkan support for NVIDIA, AMD, and Intel GPUs
+- **Voice activity detection** — automatically filters silence
+- **12 Whisper models** — from Tiny (78 MB) to Large-v3 (3.1 GB)
 - **Clipboard integration** — one-click copy via wl-clipboard
-- **Device selection** — choose your input microphone
+- **Auto-paste** — daemon mode types transcription directly via wtype
 
-## 📦 Installation
+## Installation
 
 **Arch Linux (AUR)**
 
 ```sh
-paru -S sotto
+paru -S sotto-bin
+```
+
+**AppImage**
+
+Download from [Releases](https://github.com/Maciejonos/sotto/releases), make executable and run:
+
+```sh
+chmod +x Sotto-x86_64.AppImage
+./Sotto-x86_64.AppImage
 ```
 
 **From source**
 
 ```sh
+# Install dependencies (Arch)
+sudo pacman -S gtk4 libadwaita pipewire wl-clipboard wtype vulkan-headers
+
+# Build
 cargo build --release
+
+# Run
+./target/release/sotto
 ```
 
-## 🔧 Dependencies
+## Quick Start
+
+### GUI Mode
+
+1. Launch `sotto`
+2. Open Settings and download a model
+3. Click record, speak, click stop
+4. Copy the transcription
+
+### Daemon Mode (Global Hotkey)
+
+Run the daemon:
+
+```sh
+sotto daemon
+```
+
+Configure your compositor to toggle recording with a hotkey:
+
+**Hyprland** (`~/.config/hypr/hyprland.conf`):
+```
+bind = $mainMod, V, exec, pkill -USR1 sotto
+```
+
+**Niri** (`~/.config/niri/config.kdl`):
+```kdl
+binds {
+    Mod+V { spawn "pkill" "-USR1" "sotto"; }
+}
+```
+
+**Sway** (`~/.config/sway/config`):
+```
+bindsym $mod+v exec pkill -USR1 sotto
+```
+
+Press the hotkey to start recording, press again to stop — transcription is auto-pasted at cursor.
+
+### Autostart Daemon
+
+```sh
+sotto enable   # Enable systemd user service
+sotto disable  # Disable it
+```
+
+## Dependencies
 
 | Runtime | Purpose |
 |---------|---------|
 | gtk4, libadwaita | GUI |
-| pipewire | Audio capture (pw-record) |
+| pipewire | Audio capture |
 | wl-clipboard | Clipboard (wl-copy) |
+| wtype | Auto-paste in daemon mode |
+| vulkan-icd-loader | GPU acceleration |
 
-## 🚀 Usage
-
-1. Launch Sotto
-2. Open Settings and download a model
-3. Click the record button, speak, click stop
-4. Copy the transcription to clipboard
-
-## 📝 Models
+## Models
 
 Models are downloaded from HuggingFace via Settings and stored in `~/.local/share/sotto/models/`.
-<https://huggingface.co/ggerganov/whisper.cpp/tree/main>
 
 | Model | Size | Notes |
 |-------|------|-------|
@@ -59,6 +116,6 @@ Models are downloaded from HuggingFace via Settings and stored in `~/.local/shar
 
 English-only models (EN) are smaller and optimized for English speech.
 
-## 📄 License
+## License
 
 MIT

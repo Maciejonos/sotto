@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libasound2-dev \
+            cmake clang vulkan-headers libvulkan-dev \
+            libfuse2 file
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create AppImage
+        run: |
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/release/sotto AppDir/usr/bin/
+          cp data/sotto.desktop AppDir/usr/share/applications/
+          cp data/sotto.png AppDir/usr/share/icons/hicolor/256x256/apps/sotto.png
+          cp data/sotto.desktop AppDir/
+          cp data/sotto.png AppDir/
+          ln -sf usr/bin/sotto AppDir/AppRun
+
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage AppDir Sotto-x86_64.AppImage
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/sotto
+            Sotto-x86_64.AppImage
