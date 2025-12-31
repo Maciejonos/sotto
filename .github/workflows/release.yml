@@ -18,8 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libadwaita-1-dev libasound2-dev \
-            cmake clang vulkan-headers libvulkan-dev \
-            libfuse2 file
+            cmake clang libvulkan-dev libfuse2 file
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
