@@ -11,7 +11,7 @@ use signal_mode::{
 };
 use std::cell::RefCell;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::mpsc;
 use transcription::TranscriptionWorker;
@@ -257,7 +257,8 @@ fn enable_systemd() {
     let unit = format!(
         "[Unit]\n\
          Description=Sotto speech-to-text daemon\n\
-         After=graphical-session.target\n\
+         After=graphical-session.target pipewire.service\n\
+         Wants=pipewire.service\n\
          PartOf=graphical-session.target\n\
          \n\
          [Service]\n\
@@ -318,156 +319,181 @@ fn disable_systemd() {
     println!("Sotto service disabled");
 }
 
+fn get_daemon_status() -> (bool, bool) {
+    let enabled = Command::new("systemctl")
+        .args(["--user", "is-enabled", "sotto"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let active = Command::new("systemctl")
+        .args(["--user", "is-active", "sotto"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    (enabled, active)
+}
+
+fn downloaded_models() -> Vec<&'static Model> {
+    MODELS.iter().filter(|m| is_model_downloaded(m.id)).collect()
+}
+
 fn build_ui(app: &adw::Application) {
     use adw::prelude::*;
 
     let (saved_model, saved_device, saved_language) = load_settings();
-
-    let model_display_name = MODELS
-        .iter()
-        .find(|m| m.id == saved_model)
-        .map(|m| m.name)
-        .unwrap_or("Base (EN)");
-
-    let current_model: Rc<RefCell<String>> = Rc::new(RefCell::new(saved_model));
+    let current_model: Rc<RefCell<String>> = Rc::new(RefCell::new(saved_model.clone()));
     let current_device: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(saved_device));
     let current_language: Rc<RefCell<String>> = Rc::new(RefCell::new(saved_language));
-    let gui_session: Rc<RefCell<Option<RecordingSession>>> = Rc::new(RefCell::new(None));
-    let gui_worker: Rc<RefCell<Option<TranscriptionWorker>>> = Rc::new(RefCell::new(None));
-    let worker_model: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
-    let model_label = gtk::Label::builder()
-        .label(model_display_name)
+    let header_icon = gtk::Image::builder()
+        .icon_name("audio-input-microphone-symbolic")
+        .css_classes(["accent"])
+        .build();
+    let header_title = gtk::Label::builder()
+        .label("Sotto")
         .css_classes(["heading"])
         .build();
-
-    let settings_button = gtk::Button::builder()
-        .icon_name("emblem-system-symbolic")
-        .css_classes(["flat"])
+    let header_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
         .build();
+    header_box.append(&header_icon);
+    header_box.append(&header_title);
 
-    let languages = [
-        "en", "auto", "pl", "de", "fr", "es", "it", "pt", "nl", "ja", "zh", "ko", "ru",
-    ];
-    let lang_list = gtk::StringList::new(&languages);
-    let lang_dropdown = gtk::DropDown::builder().model(&lang_list).build();
-
-    let current_lang = current_language.borrow();
-    if let Some(idx) = languages.iter().position(|&l| l == *current_lang) {
-        lang_dropdown.set_selected(idx as u32);
-    }
-    let is_en_model = current_model.borrow().contains(".en");
-    lang_dropdown.set_sensitive(!is_en_model);
-    drop(current_lang);
-
-    lang_dropdown.connect_selected_notify(glib::clone!(
-        #[strong]
-        current_model,
-        #[strong]
-        current_device,
-        #[strong]
-        current_language,
-        move |dropdown| {
-            if let Some(item) = dropdown.selected_item()
-                && let Some(string_obj) = item.downcast_ref::<gtk::StringObject>()
-            {
-                let lang = string_obj.string().to_string();
-                *current_language.borrow_mut() = lang.clone();
-                save_settings(
-                    &current_model.borrow(),
-                    current_device.borrow().as_deref(),
-                    &lang,
-                );
-            }
-        }
-    ));
-
-    let header = adw::HeaderBar::builder().title_widget(&model_label).build();
-    header.pack_start(&lang_dropdown);
-    header.pack_end(&settings_button);
-
-    let text_view = gtk::TextView::builder()
-        .editable(false)
-        .cursor_visible(false)
-        .wrap_mode(gtk::WrapMode::Word)
-        .left_margin(12)
-        .right_margin(12)
-        .top_margin(12)
-        .bottom_margin(12)
-        .vexpand(true)
+    let header = adw::HeaderBar::builder()
+        .title_widget(&header_box)
         .build();
-
-    let placeholder_label = gtk::Label::builder()
-        .label("Transcribed text will appear here")
-        .css_classes(["dim-label"])
-        .halign(gtk::Align::Start)
-        .valign(gtk::Align::Start)
-        .margin_start(12)
-        .margin_top(12)
-        .build();
-
-    let copy_button = gtk::Button::builder()
-        .icon_name("edit-copy-symbolic")
-        .css_classes(["flat", "circular"])
-        .halign(gtk::Align::End)
-        .valign(gtk::Align::End)
-        .margin_end(8)
-        .margin_bottom(8)
-        .visible(false)
-        .tooltip_text("Copy to clipboard")
-        .build();
-
-    let text_overlay = gtk::Overlay::builder().child(&text_view).build();
-    text_overlay.add_overlay(&placeholder_label);
-    text_overlay.add_overlay(&copy_button);
-
-    let text_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .child(&text_overlay)
-        .vexpand(true)
-        .build();
-
-    let text_frame = gtk::Frame::builder()
-        .child(&text_scroll)
-        .margin_start(12)
-        .margin_end(12)
-        .margin_top(12)
-        .build();
-
-    let status_label = gtk::Label::builder()
-        .label("Click to record")
-        .css_classes(["dim-label"])
-        .margin_top(12)
-        .build();
-
-    let record_button = gtk::Button::builder()
-        .icon_name("media-record-symbolic")
-        .css_classes(["circular", "suggested-action"])
-        .width_request(64)
-        .height_request(64)
-        .halign(gtk::Align::Center)
-        .margin_top(12)
-        .margin_bottom(24)
-        .build();
-
-    let record_area = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .halign(gtk::Align::Center)
-        .build();
-    record_area.append(&status_label);
-    record_area.append(&record_button);
-
-    let content = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .vexpand(true)
-        .build();
-    content.append(&text_frame);
-    content.append(&record_area);
 
     let toast_overlay = adw::ToastOverlay::new();
-    toast_overlay.set_child(Some(&content));
-    toast_overlay.set_vexpand(true);
+
+    let settings_group = adw::PreferencesGroup::builder()
+        .title("Transcription")
+        .build();
+
+    let models = downloaded_models();
+    let model_names: Vec<&str> = models.iter().map(|m| m.name).collect();
+    let model_list = gtk::StringList::new(&model_names);
+    let model_row = adw::ComboRow::builder()
+        .title("Model")
+        .model(&model_list)
+        .build();
+    model_row.add_prefix(&gtk::Image::from_icon_name("application-x-addon-symbolic"));
+    let model_idx = models.iter().position(|m| m.id == saved_model).unwrap_or(0);
+    model_row.set_selected(model_idx as u32);
+
+    let devices = list_input_devices();
+    let device_names: Vec<&str> = std::iter::once("Default")
+        .chain(devices.iter().map(|d| d.description.as_str()))
+        .collect();
+    let device_list = gtk::StringList::new(&device_names);
+    let device_row = adw::ComboRow::builder()
+        .title("Input Device")
+        .model(&device_list)
+        .build();
+    device_row.add_prefix(&gtk::Image::from_icon_name("audio-input-microphone-symbolic"));
+    let device_idx = current_device
+        .borrow()
+        .as_ref()
+        .and_then(|name| devices.iter().position(|d| &d.name == name))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    device_row.set_selected(device_idx as u32);
+    device_row.set_subtitle(device_names[device_idx]);
+
+    let languages = [
+        ("auto", "Auto"),
+        ("de", "German"),
+        ("en", "English"),
+        ("es", "Spanish"),
+        ("fr", "French"),
+        ("it", "Italian"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
+        ("nl", "Dutch"),
+        ("pl", "Polish"),
+        ("pt", "Portuguese"),
+        ("ru", "Russian"),
+        ("zh", "Chinese"),
+    ];
+    let lang_names: Vec<&str> = languages.iter().map(|(_, name)| *name).collect();
+    let lang_list = gtk::StringList::new(&lang_names);
+    let lang_row = adw::ComboRow::builder()
+        .title("Language")
+        .subtitle("Auto is slower and less accurate")
+        .model(&lang_list)
+        .build();
+    lang_row.add_prefix(&gtk::Image::from_icon_name("preferences-desktop-locale-symbolic"));
+    let saved_lang = current_language.borrow();
+    let lang_idx = languages.iter().position(|(code, _)| *code == *saved_lang).unwrap_or(2);
+    lang_row.set_selected(lang_idx as u32);
+    drop(saved_lang);
+    let is_en_model = current_model.borrow().contains(".en");
+    lang_row.set_sensitive(!is_en_model);
+
+    settings_group.add(&model_row);
+    settings_group.add(&device_row);
+    settings_group.add(&lang_row);
+
+    let models_row = adw::ActionRow::builder()
+        .title("Manage Models")
+        .subtitle("Download or remove Whisper models")
+        .activatable(true)
+        .build();
+    models_row.add_prefix(&gtk::Image::from_icon_name("folder-download-symbolic"));
+    models_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    settings_group.add(&models_row);
+
+    let daemon_group = adw::PreferencesGroup::builder()
+        .title("Background Service")
+        .description("Runs in background, triggered by keyboard shortcut")
+        .build();
+
+    let (enabled, _active) = get_daemon_status();
+    let daemon_switch = gtk::Switch::builder()
+        .valign(gtk::Align::Center)
+        .active(enabled)
+        .build();
+    let daemon_row = adw::ActionRow::builder()
+        .title("Enable Daemon")
+        .subtitle("Start automatically with your session")
+        .activatable_widget(&daemon_switch)
+        .build();
+    daemon_row.add_prefix(&gtk::Image::from_icon_name("system-run-symbolic"));
+    daemon_row.add_suffix(&daemon_switch);
+    daemon_group.add(&daemon_row);
+
+    let help_row = adw::ActionRow::builder()
+        .title("Setup Instructions")
+        .subtitle("Configure your compositor keybinding")
+        .activatable(true)
+        .build();
+    help_row.add_prefix(&gtk::Image::from_icon_name("dialog-information-symbolic"));
+    help_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+    daemon_group.add(&help_row);
+
+    let about_group = adw::PreferencesGroup::new();
+    let github_row = adw::ActionRow::builder()
+        .title("Source Code")
+        .subtitle("github.com/Maciejonos/sotto")
+        .activatable(true)
+        .build();
+    github_row.add_prefix(&gtk::Image::from_icon_name("web-browser-symbolic"));
+    github_row.add_suffix(&gtk::Image::from_icon_name("external-link-symbolic"));
+    about_group.add(&github_row);
+
+    let page = adw::PreferencesPage::new();
+    page.add(&settings_group);
+    page.add(&daemon_group);
+    page.add(&about_group);
+
+    let clamp = adw::Clamp::builder()
+        .child(&page)
+        .maximum_size(600)
+        .margin_start(16)
+        .margin_end(16)
+        .margin_top(12)
+        .build();
+    toast_overlay.set_child(Some(&clamp));
 
     let main_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -478,129 +504,13 @@ fn build_ui(app: &adw::Application) {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Sotto")
-        .default_width(550)
-        .default_height(550)
+        .default_width(520)
+        .default_height(580)
         .resizable(false)
         .content(&main_box)
         .build();
 
-    copy_button.connect_clicked(glib::clone!(
-        #[weak]
-        text_view,
-        #[weak]
-        toast_overlay,
-        move |_| {
-            let buffer = text_view.buffer();
-            let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), false);
-            if copy_to_clipboard(&text) {
-                let toast = adw::Toast::new("Copied to clipboard");
-                toast_overlay.add_toast(toast);
-            }
-        }
-    ));
-
-    record_button.connect_clicked(glib::clone!(
-        #[weak]
-        status_label,
-        #[weak]
-        text_view,
-        #[weak]
-        placeholder_label,
-        #[weak]
-        copy_button,
-        #[strong]
-        gui_session,
-        #[strong]
-        gui_worker,
-        #[strong]
-        worker_model,
-        #[strong]
-        current_model,
-        #[strong]
-        current_device,
-        #[strong]
-        current_language,
-        move |btn| {
-            let is_recording = gui_session.borrow().is_some();
-            if is_recording {
-                if let Some(session) = gui_session.borrow_mut().take() {
-                    let samples = session.stop();
-                    if !samples.is_empty()
-                        && let Some(ref worker) = *gui_worker.borrow()
-                    {
-                        let mut lang = current_language.borrow().clone();
-                        if current_model.borrow().contains(".en") {
-                            lang = "en".to_string();
-                        }
-                        worker.transcribe(samples, &lang);
-                        status_label.set_label("Transcribing...");
-                    } else {
-                        status_label.set_label("Click to record");
-                        placeholder_label.set_visible(true);
-                    }
-                }
-                btn.remove_css_class("destructive-action");
-                btn.add_css_class("suggested-action");
-                btn.set_icon_name("media-record-symbolic");
-            } else {
-                let model_id = current_model.borrow().clone();
-                let device = current_device.borrow().clone();
-
-                let model_path = match models_dir() {
-                    Some(d) => d.join(&model_id),
-                    None => {
-                        status_label.set_label("Error: Cannot find data directory");
-                        return;
-                    }
-                };
-
-                if !model_path.exists() {
-                    status_label.set_label("Error: Model not downloaded");
-                    return;
-                }
-
-                let needs_reload = worker_model
-                    .borrow()
-                    .as_ref()
-                    .map(|m| m != &model_id)
-                    .unwrap_or(true);
-
-                if needs_reload {
-                    status_label.set_label("Loading model...");
-                    match TranscriptionWorker::start(model_path) {
-                        Ok(w) => {
-                            *gui_worker.borrow_mut() = Some(w);
-                            *worker_model.borrow_mut() = Some(model_id);
-                        }
-                        Err(e) => {
-                            status_label.set_label(&format!("Error: {}", e));
-                            return;
-                        }
-                    }
-                }
-
-                match RecordingSession::start(device) {
-                    Ok(session) => {
-                        *gui_session.borrow_mut() = Some(session);
-                        text_view.buffer().set_text("");
-                        placeholder_label.set_visible(false);
-                        copy_button.set_visible(false);
-                        btn.remove_css_class("suggested-action");
-                        btn.add_css_class("destructive-action");
-                        btn.set_icon_name("media-playback-stop-symbolic");
-                        status_label.set_label("Recording...");
-                    }
-                    Err(e) => {
-                        status_label.set_label(&format!("Error: {}", e));
-                    }
-                }
-            }
-        }
-    ));
-
-    settings_button.connect_clicked(glib::clone!(
-        #[weak]
-        window,
+    model_row.connect_selected_notify(glib::clone!(
         #[strong]
         current_model,
         #[strong]
@@ -608,175 +518,20 @@ fn build_ui(app: &adw::Application) {
         #[strong]
         current_language,
         #[weak]
-        model_label,
-        #[weak]
-        lang_dropdown,
-        move |_| {
-            show_settings(
-                &window,
-                &current_model,
-                &current_device,
-                &current_language,
-                &model_label,
-                &lang_dropdown,
-            );
-        }
-    ));
-
-    glib::timeout_add_local(
-        std::time::Duration::from_millis(50),
-        glib::clone!(
-            #[strong]
-            gui_worker,
-            #[weak]
-            text_view,
-            #[weak]
-            copy_button,
-            #[weak]
-            status_label,
-            #[weak]
-            placeholder_label,
-            #[upgrade_or]
-            glib::ControlFlow::Break,
-            move || {
-                if let Some(ref worker) = *gui_worker.borrow() {
-                    while let Some(text) = worker.try_recv_result() {
-                        status_label.set_label("Click to record");
-                        if !text.is_empty() {
-                            let buffer = text_view.buffer();
-                            buffer.set_text(&text);
-                            copy_button.set_visible(true);
-                        } else {
-                            placeholder_label.set_visible(true);
-                        }
-                    }
-                }
-                glib::ControlFlow::Continue
-            }
-        ),
-    );
-
-    window.present();
-}
-
-#[allow(clippy::too_many_arguments)]
-fn setup_downloaded_row(
-    row: &adw::ActionRow,
-    settings: &adw::PreferencesWindow,
-    current_model: &Rc<RefCell<String>>,
-    current_device: &Rc<RefCell<Option<String>>>,
-    current_language: &Rc<RefCell<String>>,
-    model_label: &gtk::Label,
-    lang_dropdown: &gtk::DropDown,
-    model_id: &str,
-    model_name: &str,
-) {
-    use adw::prelude::*;
-
-    let delete_btn = gtk::Button::builder()
-        .icon_name("user-trash-symbolic")
-        .css_classes(["flat"])
-        .valign(gtk::Align::Center)
-        .build();
-
-    let model_id = model_id.to_string();
-    let model_name = model_name.to_string();
-
-    delete_btn.connect_clicked(glib::clone!(
-        #[weak]
-        row,
-        #[weak]
-        settings,
-        #[strong]
-        current_model,
-        #[strong]
-        model_id,
-        move |btn| {
-            if *current_model.borrow() == model_id {
-                settings.add_toast(adw::Toast::new("Cannot delete active model"));
-                return;
-            }
-            if delete_model(&model_id).is_ok() {
-                row.set_subtitle("Deleted");
-                btn.set_visible(false);
+        lang_row,
+        move |row| {
+            let models = downloaded_models();
+            if let Some(model) = models.get(row.selected() as usize) {
+                *current_model.borrow_mut() = model.id.to_string();
+                lang_row.set_sensitive(!model.id.contains(".en"));
+                save_settings(
+                    model.id,
+                    current_device.borrow().as_deref(),
+                    &current_language.borrow(),
+                );
             }
         }
     ));
-
-    row.add_suffix(&delete_btn);
-    row.set_activatable(true);
-
-    row.connect_activated(glib::clone!(
-        #[strong]
-        current_model,
-        #[strong]
-        current_device,
-        #[strong]
-        current_language,
-        #[weak]
-        model_label,
-        #[weak]
-        lang_dropdown,
-        #[weak]
-        settings,
-        #[strong]
-        model_id,
-        #[strong]
-        model_name,
-        move |_| {
-            *current_model.borrow_mut() = model_id.clone();
-            model_label.set_label(&model_name);
-            lang_dropdown.set_sensitive(!model_id.contains(".en"));
-            save_settings(
-                &model_id,
-                current_device.borrow().as_deref(),
-                &current_language.borrow(),
-            );
-            settings.close();
-        }
-    ));
-}
-
-fn show_settings(
-    parent: &adw::ApplicationWindow,
-    current_model: &Rc<RefCell<String>>,
-    current_device: &Rc<RefCell<Option<String>>>,
-    current_language: &Rc<RefCell<String>>,
-    model_label: &gtk::Label,
-    lang_dropdown: &gtk::DropDown,
-) {
-    use adw::prelude::*;
-
-    let settings = adw::PreferencesWindow::builder()
-        .title("Settings")
-        .transient_for(parent)
-        .modal(true)
-        .build();
-
-    let devices_group = adw::PreferencesGroup::builder()
-        .title("Input Device")
-        .build();
-
-    let devices = list_input_devices();
-    let device_names: Vec<&str> = std::iter::once("Default")
-        .chain(devices.iter().map(|d| d.description.as_str()))
-        .collect();
-    let device_list = gtk::StringList::new(&device_names);
-
-    let device_row = adw::ComboRow::builder()
-        .title("Microphone")
-        .model(&device_list)
-        .use_subtitle(true)
-        .build();
-    device_row.set_subtitle_lines(2);
-
-    let current_dev = current_device.borrow();
-    if let Some(ref dev_name) = *current_dev
-        && let Some(idx) = devices.iter().position(|d| &d.name == dev_name)
-    {
-        device_row.set_selected((idx + 1) as u32);
-    }
-    drop(current_dev);
 
     device_row.connect_selected_notify(glib::clone!(
         #[strong]
@@ -791,8 +546,10 @@ fn show_settings(
             let selected = row.selected() as usize;
             if selected == 0 {
                 *current_device.borrow_mut() = None;
+                row.set_subtitle("Default");
             } else if let Some(dev) = devices.get(selected - 1) {
                 *current_device.borrow_mut() = Some(dev.name.clone());
+                row.set_subtitle(&dev.description);
             }
             save_settings(
                 &current_model.borrow(),
@@ -802,11 +559,106 @@ fn show_settings(
         }
     ));
 
-    devices_group.add(&device_row);
+    let lang_codes = ["auto", "de", "en", "es", "fr", "it", "ja", "ko", "nl", "pl", "pt", "ru", "zh"];
+    lang_row.connect_selected_notify(glib::clone!(
+        #[strong]
+        current_model,
+        #[strong]
+        current_device,
+        #[strong]
+        current_language,
+        move |row| {
+            let idx = row.selected() as usize;
+            if let Some(code) = lang_codes.get(idx) {
+                *current_language.borrow_mut() = code.to_string();
+                save_settings(
+                    &current_model.borrow(),
+                    current_device.borrow().as_deref(),
+                    code,
+                );
+            }
+        }
+    ));
+
+    models_row.connect_activated(glib::clone!(
+        #[weak]
+        window,
+        #[strong]
+        current_model,
+        #[weak]
+        model_row,
+        move |_| {
+            show_model_manager(&window, &current_model, &model_row);
+        }
+    ));
+
+    daemon_switch.connect_active_notify(glib::clone!(
+        #[weak]
+        toast_overlay,
+        move |sw| {
+            let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sotto"));
+            if sw.is_active() {
+                match Command::new(&exe).arg("enable").status() {
+                    Ok(s) if s.success() => {
+                        toast_overlay.add_toast(adw::Toast::new("Daemon enabled"));
+                    }
+                    _ => {
+                        sw.set_active(false);
+                        toast_overlay.add_toast(adw::Toast::new("Failed to enable daemon"));
+                    }
+                }
+            } else {
+                match Command::new(&exe).arg("disable").status() {
+                    Ok(s) if s.success() => {
+                        toast_overlay.add_toast(adw::Toast::new("Daemon disabled"));
+                    }
+                    _ => {
+                        sw.set_active(true);
+                        toast_overlay.add_toast(adw::Toast::new("Failed to disable daemon"));
+                    }
+                }
+            }
+        }
+    ));
+
+    help_row.connect_activated(glib::clone!(
+        #[weak]
+        window,
+        move |_| {
+            show_setup_help(&window);
+        }
+    ));
+
+    github_row.connect_activated(|_| {
+        let _ = Command::new("xdg-open")
+            .arg("https://github.com/Maciejonos/sotto")
+            .spawn();
+    });
+
+    window.present();
+}
+
+fn show_model_manager(
+    parent: &adw::ApplicationWindow,
+    current_model: &Rc<RefCell<String>>,
+    model_row: &adw::ComboRow,
+) {
+    use adw::prelude::*;
+
+    let manager = adw::Window::builder()
+        .title("Model Manager")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(400)
+        .default_height(500)
+        .build();
+
+    let header = adw::HeaderBar::new();
+    let toast_overlay = adw::ToastOverlay::new();
 
     let models_group = adw::PreferencesGroup::builder()
-        .title("Models")
-        .description("Select a model for transcription")
+        .title("Available Models")
+        .description("Download models for transcription")
         .build();
 
     for model in MODELS {
@@ -822,43 +674,57 @@ fn show_settings(
             if is_current {
                 row.add_suffix(&gtk::Image::from_icon_name("object-select-symbolic"));
             }
-            setup_downloaded_row(
-                &row,
-                &settings,
+            let delete_btn = gtk::Button::builder()
+                .icon_name("user-trash-symbolic")
+                .css_classes(["flat"])
+                .valign(gtk::Align::Center)
+                .build();
+            let model_id = model.id.to_string();
+            delete_btn.connect_clicked(glib::clone!(
+                #[weak]
+                row,
+                #[weak]
+                toast_overlay,
+                #[weak]
+                model_row,
+                #[strong]
                 current_model,
-                current_device,
-                current_language,
-                model_label,
-                lang_dropdown,
-                model.id,
-                model.name,
-            );
+                #[strong]
+                model_id,
+                move |btn| {
+                    if *current_model.borrow() == model_id {
+                        toast_overlay.add_toast(adw::Toast::new("Cannot delete active model"));
+                        return;
+                    }
+                    if delete_model(&model_id).is_ok() {
+                        row.set_subtitle("Deleted");
+                        btn.set_visible(false);
+                        let models = downloaded_models();
+                        let model_names: Vec<&str> = models.iter().map(|m| m.name).collect();
+                        model_row.set_model(Some(&gtk::StringList::new(&model_names)));
+                        let cur = current_model.borrow();
+                        let idx = models.iter().position(|m| m.id == *cur).unwrap_or(0);
+                        model_row.set_selected(idx as u32);
+                    }
+                }
+            ));
+            row.add_suffix(&delete_btn);
         } else {
             let download_btn = gtk::Button::builder()
                 .icon_name("folder-download-symbolic")
                 .css_classes(["flat"])
                 .valign(gtk::Align::Center)
                 .build();
-
             let model_clone = model.clone();
-            let model_id = model.id.to_string();
-            let model_name = model.name.to_string();
-
             download_btn.connect_clicked(glib::clone!(
                 #[weak]
                 row,
                 #[weak]
-                settings,
+                toast_overlay,
+                #[weak]
+                model_row,
                 #[strong]
                 current_model,
-                #[strong]
-                current_device,
-                #[strong]
-                current_language,
-                #[weak]
-                model_label,
-                #[weak]
-                lang_dropdown,
                 move |btn| {
                     btn.set_sensitive(false);
                     let progress = gtk::ProgressBar::builder()
@@ -870,13 +736,7 @@ fn show_settings(
 
                     let model = model_clone.clone();
                     let (tx, rx) = mpsc::channel::<DownloadProgress>();
-
-                    std::thread::spawn(move || {
-                        download_model(&model, tx);
-                    });
-
-                    let model_id = model_id.clone();
-                    let model_name = model_name.clone();
+                    std::thread::spawn(move || download_model(&model, tx));
 
                     glib::timeout_add_local(
                         std::time::Duration::from_millis(50),
@@ -886,17 +746,11 @@ fn show_settings(
                             #[weak]
                             row,
                             #[weak]
-                            settings,
+                            toast_overlay,
+                            #[weak]
+                            model_row,
                             #[strong]
                             current_model,
-                            #[strong]
-                            current_device,
-                            #[strong]
-                            current_language,
-                            #[weak]
-                            model_label,
-                            #[weak]
-                            lang_dropdown,
                             #[upgrade_or]
                             glib::ControlFlow::Break,
                             move || {
@@ -907,33 +761,22 @@ fn show_settings(
                                         }
                                         Ok(DownloadProgress::Done) => {
                                             progress.set_visible(false);
-                                            setup_downloaded_row(
-                                                &row,
-                                                &settings,
-                                                &current_model,
-                                                &current_device,
-                                                &current_language,
-                                                &model_label,
-                                                &lang_dropdown,
-                                                &model_id,
-                                                &model_name,
-                                            );
-                                            settings
-                                                .add_toast(adw::Toast::new("Download complete"));
+                                            row.add_suffix(&gtk::Image::from_icon_name("emblem-ok-symbolic"));
+                                            toast_overlay.add_toast(adw::Toast::new("Download complete"));
+                                            let models = downloaded_models();
+                                            let model_names: Vec<&str> = models.iter().map(|m| m.name).collect();
+                                            model_row.set_model(Some(&gtk::StringList::new(&model_names)));
+                                            let cur = current_model.borrow();
+                                            let idx = models.iter().position(|m| m.id == *cur).unwrap_or(0);
+                                            model_row.set_selected(idx as u32);
                                             return glib::ControlFlow::Break;
                                         }
                                         Ok(DownloadProgress::Error(e)) => {
-                                            let toast =
-                                                adw::Toast::new(&format!("Download failed: {}", e));
-                                            settings.add_toast(toast);
+                                            toast_overlay.add_toast(adw::Toast::new(&format!("Download failed: {}", e)));
                                             return glib::ControlFlow::Break;
                                         }
-                                        Err(mpsc::TryRecvError::Empty) => {
-                                            return glib::ControlFlow::Continue;
-                                        }
-                                        Err(mpsc::TryRecvError::Disconnected) => {
-                                            return glib::ControlFlow::Break;
-                                        }
+                                        Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+                                        Err(mpsc::TryRecvError::Disconnected) => return glib::ControlFlow::Break,
                                     }
                                 }
                             }
@@ -941,19 +784,103 @@ fn show_settings(
                     );
                 }
             ));
-
             row.add_suffix(&download_btn);
         }
-
         models_group.add(&row);
     }
 
     let page = adw::PreferencesPage::new();
-    page.add(&devices_group);
     page.add(&models_group);
-    settings.add(&page);
 
-    settings.present();
+    let clamp = adw::Clamp::builder()
+        .child(&page)
+        .maximum_size(500)
+        .build();
+    toast_overlay.set_child(Some(&clamp));
+
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .build();
+    content.append(&header);
+    content.append(&toast_overlay);
+    manager.set_content(Some(&content));
+
+    manager.present();
+}
+
+fn show_setup_help(parent: &adw::ApplicationWindow) {
+    use adw::prelude::*;
+
+    let dialog = adw::Window::builder()
+        .title("Setup Instructions")
+        .transient_for(parent)
+        .modal(true)
+        .default_width(400)
+        .default_height(420)
+        .build();
+
+    let header = adw::HeaderBar::new();
+
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .margin_start(24)
+        .margin_end(24)
+        .margin_top(16)
+        .margin_bottom(24)
+        .spacing(16)
+        .build();
+
+    let steps = [
+        ("1", "Enable the daemon using the toggle"),
+        ("2", "Add a keybinding in your compositor"),
+        ("3", "Press the keybinding to start/stop recording"),
+        ("4", "Text will be automatically pasted at cursor"),
+    ];
+
+    for (num, text) in steps {
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(12)
+            .build();
+        let badge = gtk::Label::builder()
+            .label(num)
+            .css_classes(["accent", "heading"])
+            .build();
+        let label = gtk::Label::builder()
+            .label(text)
+            .halign(gtk::Align::Start)
+            .wrap(true)
+            .build();
+        row.append(&badge);
+        row.append(&label);
+        content.append(&row);
+    }
+
+    let code_group = adw::PreferencesGroup::builder()
+        .title("Compositor Keybindings")
+        .margin_top(8)
+        .build();
+
+    let hypr_row = adw::ActionRow::builder()
+        .title("Hyprland")
+        .subtitle("bind = $mod, V, exec, pkill -USR1 sotto")
+        .build();
+    let niri_row = adw::ActionRow::builder()
+        .title("Niri")
+        .subtitle("Mod+V { spawn \"pkill\" \"-USR1\" \"sotto\"; }")
+        .build();
+    code_group.add(&hypr_row);
+    code_group.add(&niri_row);
+    content.append(&code_group);
+
+    let main_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .build();
+    main_box.append(&header);
+    main_box.append(&content);
+    dialog.set_content(Some(&main_box));
+
+    dialog.present();
 }
 
 enum DownloadProgress {
@@ -1030,15 +957,4 @@ fn download_model(model: &Model, tx: mpsc::Sender<DownloadProgress>) {
             let _ = tx.send(DownloadProgress::Error(e));
         }
     }
-}
-
-fn copy_to_clipboard(text: &str) -> bool {
-    use std::io::Write;
-    if let Ok(mut child) = Command::new("wl-copy").stdin(Stdio::piped()).spawn() {
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
-        }
-        return child.wait().is_ok();
-    }
-    false
 }
