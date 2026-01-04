@@ -2,19 +2,16 @@
 
 Local speech-to-text transcription for Linux/Wayland using Whisper models.
 
-Sotto runs entirely offline — your voice never leaves your machine. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for fast, local transcription with a simple GTK4/libadwaita interface.
-
-![demo](https://github.com/user-attachments/assets/0b2f7929-e9de-4e58-8c72-236f27409680)
+Sotto runs entirely offline — your voice never leaves your machine. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for fast, local transcription.
 
 ## Features
 
-- **GUI + Daemon modes** — use the app or a global hotkey
 - **Fully local** — no cloud services, no API keys, no internet required
 - **GPU accelerated** — Vulkan support for NVIDIA, AMD, and Intel GPUs
 - **Voice activity detection** — automatically filters silence
+- **Auto-paste** — transcription typed directly at cursor via wtype
 - **12 Whisper models** — from Tiny (78 MB) to Large-v3 (3.1 GB)
-- **Clipboard integration** — one-click copy via wl-clipboard
-- **Auto-paste** — daemon mode types transcription directly via wtype
+- **Desktop notifications** — recording status feedback
 
 ## Installation
 
@@ -36,34 +33,21 @@ chmod +x Sotto-x86_64.AppImage
 **From source**
 
 ```sh
-# Install dependencies (Arch)
 sudo pacman -S gtk4 libadwaita pipewire wl-clipboard wtype vulkan-headers
-
-# Build
 cargo build --release
-
-# Run
 ./target/release/sotto
 ```
 
 ## Quick Start
 
-### GUI Mode
+1. Launch `sotto` to open the control panel
+2. Download a model via "Manage Models"
+3. Select your input device and language
+4. Enable the daemon toggle
+5. Add a keybinding to your compositor (see below)
+6. Press the hotkey to start recording, speak, press again to transcribe and paste
 
-1. Launch `sotto`
-2. Open Settings and download a model
-3. Click record, speak, click stop
-4. Copy the transcription
-
-### Daemon Mode (Global Hotkey)
-
-Run the daemon:
-
-```sh
-sotto daemon
-```
-
-Configure your compositor to toggle recording with a hotkey:
+## Compositor Keybindings
 
 **Hyprland** (`~/.config/hypr/hyprland.conf`):
 ```
@@ -82,28 +66,27 @@ binds {
 bindsym $mod+v exec pkill -USR1 sotto
 ```
 
-Press the hotkey to start recording, press again to stop — transcription is auto-pasted at cursor.
-
-### Autostart Daemon
+## CLI Usage
 
 ```sh
-sotto enable   # Enable systemd user service
-sotto disable  # Disable it
+sotto              # Open control panel
+sotto daemon       # Run daemon directly
+sotto enable       # Enable systemd user service
+sotto disable      # Disable systemd user service
 ```
 
 ## Dependencies
 
 | Runtime | Purpose |
 |---------|---------|
-| gtk4, libadwaita | GUI |
+| gtk4, libadwaita | Control panel |
 | pipewire | Audio capture |
-| wl-clipboard | Clipboard (wl-copy) |
-| wtype | Auto-paste in daemon mode |
+| wtype | Auto-paste transcription |
 | vulkan-icd-loader | GPU acceleration |
 
 ## Models
 
-Models are downloaded from HuggingFace via Settings and stored in `~/.local/share/sotto/models/`.
+Models are downloaded via the control panel and stored in `~/.local/share/sotto/models/`.
 
 | Model | Size | Notes |
 |-------|------|-------|
