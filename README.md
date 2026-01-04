@@ -4,6 +4,13 @@ Local speech-to-text transcription for Linux/Wayland using Whisper models.
 
 Sotto runs entirely offline — your voice never leaves your machine. It uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for fast, local transcription.
 
+### Demo
+![demo-low-res](https://github.com/user-attachments/assets/01c34927-3d0f-4bad-955b-988c1b19cdb0)
+
+### Settings panel
+<img width="500" alt="settings" src="https://github.com/user-attachments/assets/42d6844e-0e08-41e6-bd75-a28f06d32311" />
+
+
 ## Features
 
 - **Fully local** — no cloud services, no API keys, no internet required
