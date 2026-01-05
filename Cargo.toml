@@ -1,6 +1,6 @@
 [package]
 name = "sotto"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 description = "Local speech-to-text transcription for Linux/Wayland using Whisper"
 license = "MIT"
@@ -16,8 +16,8 @@ ureq = "3.1.4"
 dirs = "6.0.0"
 cpal = "0.15"
 voice_activity_detector = "0.2"
-notify-rust = "4"
 crossbeam-channel = "0.5"
+gtk4-layer-shell = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

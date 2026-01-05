@@ -1,5 +1,4 @@
 use crate::audio::AudioRecorder;
-use notify_rust::Notification;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
@@ -32,33 +31,6 @@ pub fn start_signal_listener() -> mpsc::Receiver<SignalCommand> {
 pub fn start_signal_listener() -> mpsc::Receiver<SignalCommand> {
     let (_tx, rx) = mpsc::channel();
     rx
-}
-
-pub fn notify_recording_started() {
-    let _ = Notification::new()
-        .summary("Sotto")
-        .body("Recording started")
-        .icon("audio-input-microphone")
-        .timeout(notify_rust::Timeout::Milliseconds(2000))
-        .show();
-}
-
-pub fn notify_recording_stopped() {
-    let _ = Notification::new()
-        .summary("Sotto")
-        .body("Recording stopped")
-        .icon("audio-input-microphone")
-        .timeout(notify_rust::Timeout::Milliseconds(2000))
-        .show();
-}
-
-pub fn notify_transcribing() {
-    let _ = Notification::new()
-        .summary("Sotto")
-        .body("Transcribing...")
-        .icon("audio-input-microphone")
-        .timeout(notify_rust::Timeout::Milliseconds(1000))
-        .show();
 }
 
 pub fn paste_text(text: &str) -> bool {

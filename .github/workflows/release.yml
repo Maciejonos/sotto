@@ -23,7 +23,16 @@ jobs:
           sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-noble.list https://packages.lunarg.com/vulkan/lunarg-vulkan-noble.list
           sudo apt-get update
           sudo apt-get install -y vulkan-sdk libgtk-4-dev libadwaita-1-dev libasound2-dev \
-            cmake clang libfuse2 file
+            cmake clang libfuse2 file meson ninja-build gobject-introspection libgirepository1.0-dev
+
+      - name: Build gtk4-layer-shell
+        run: |
+          git clone --depth 1 https://github.com/wmww/gtk4-layer-shell.git
+          cd gtk4-layer-shell
+          meson setup build -Dexamples=false -Ddocs=false -Dtests=false -Dvapi=false
+          ninja -C build
+          sudo ninja -C build install
+          sudo ldconfig
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

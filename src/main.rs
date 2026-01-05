@@ -1,14 +1,14 @@
 mod audio;
+mod indicator;
 mod models;
 mod signal_mode;
 mod transcription;
 
 use gtk::glib;
+use gtk::prelude::*;
+use indicator::{Indicator, IndicatorState};
 use models::{MODELS, Model};
-use signal_mode::{
-    RecordingSession, notify_recording_started, notify_recording_stopped, notify_transcribing,
-    paste_text, start_signal_listener,
-};
+use signal_mode::{RecordingSession, paste_text, start_signal_listener};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::process::Command;
@@ -199,41 +199,60 @@ fn run_daemon() {
     println!("Sotto daemon started (language: {})", language);
     println!("Send SIGUSR1 to toggle recording (pkill -USR1 sotto)");
 
-    let signal_rx = start_signal_listener();
-    let mut session: Option<RecordingSession> = None;
+    gtk::init().expect("Failed to initialize GTK");
+    let app = gtk::Application::builder()
+        .application_id("io.github.sotto.daemon")
+        .build();
 
-    loop {
-        match signal_rx.try_recv() {
-            Ok(_) => {
-                if let Some(s) = session.take() {
-                    notify_recording_stopped();
-                    let samples = s.stop();
-                    if !samples.is_empty() {
-                        notify_transcribing();
-                        worker.transcribe(samples, &language);
-                    }
-                } else {
-                    match RecordingSession::start(device.clone()) {
-                        Ok(s) => {
-                            session = Some(s);
-                            notify_recording_started();
+    let worker = Rc::new(worker);
+    let worker_clone = worker.clone();
+
+    app.connect_activate(move |app| {
+        let indicator = Rc::new(Indicator::new(app));
+        let signal_rx = start_signal_listener();
+        let session: Rc<RefCell<Option<RecordingSession>>> = Rc::new(RefCell::new(None));
+        let device = device.clone();
+        let language = language.clone();
+        let worker = worker_clone.clone();
+        let indicator_clone = indicator.clone();
+
+        glib::timeout_add_local(std::time::Duration::from_millis(20), move || {
+            match signal_rx.try_recv() {
+                Ok(_) => {
+                    if let Some(s) = session.borrow_mut().take() {
+                        indicator_clone.show(IndicatorState::Transcribing);
+                        let samples = s.stop();
+                        if !samples.is_empty() {
+                            worker.transcribe(samples, &language);
+                        } else {
+                            indicator_clone.hide();
                         }
-                        Err(e) => eprintln!("Failed to start recording: {}", e),
+                    } else {
+                        match RecordingSession::start(device.clone()) {
+                            Ok(s) => {
+                                *session.borrow_mut() = Some(s);
+                                indicator_clone.show(IndicatorState::Recording);
+                            }
+                            Err(e) => eprintln!("Failed to start recording: {}", e),
+                        }
                     }
                 }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => return glib::ControlFlow::Break,
             }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => break,
-        }
 
-        while let Some(text) = worker.try_recv_result() {
-            if !text.is_empty() {
-                paste_text(&text);
+            while let Some(result) = worker.try_recv_result() {
+                indicator_clone.hide();
+                if !result.is_empty() {
+                    paste_text(&result);
+                }
             }
-        }
 
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+            glib::ControlFlow::Continue
+        });
+    });
+
+    app.run_with_args::<&str>(&[]);
 }
 
 fn systemd_dir() -> Option<PathBuf> {
