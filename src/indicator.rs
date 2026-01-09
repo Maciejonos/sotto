@@ -53,9 +53,7 @@ impl Indicator {
 			.pixel_size(18)
 			.build();
 
-		let label = gtk::Label::builder()
-			.label("0:00")
-			.build();
+		let label = gtk::Label::builder().label("0:00").build();
 
 		container.append(&icon);
 		container.append(&label);
@@ -67,7 +65,7 @@ impl Indicator {
 			 image { color: @error_color; }
 			 label { font-weight: bold; font-size: 14px; }
 			 window.transcribing image { color: @accent_color; }
-			 window.transcribing label { color: @accent_color; }"
+			 window.transcribing label { color: @accent_color; }",
 		);
 		gtk::style_context_add_provider_for_display(
 			&gtk::gdk::Display::default().unwrap(),

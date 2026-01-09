@@ -9,54 +9,54 @@ use signal_hook::consts::SIGUSR1;
 use signal_hook::iterator::Signals;
 
 pub enum SignalCommand {
-    Toggle,
+	Toggle,
 }
 
 #[cfg(unix)]
 pub fn start_signal_listener() -> mpsc::Receiver<SignalCommand> {
-    let (tx, rx) = mpsc::channel();
+	let (tx, rx) = mpsc::channel();
 
-    thread::spawn(move || {
-        if let Ok(mut signals) = Signals::new([SIGUSR1]) {
-            for _ in signals.forever() {
-                let _ = tx.send(SignalCommand::Toggle);
-            }
-        }
-    });
+	thread::spawn(move || {
+		if let Ok(mut signals) = Signals::new([SIGUSR1]) {
+			for _ in signals.forever() {
+				let _ = tx.send(SignalCommand::Toggle);
+			}
+		}
+	});
 
-    rx
+	rx
 }
 
 #[cfg(not(unix))]
 pub fn start_signal_listener() -> mpsc::Receiver<SignalCommand> {
-    let (_tx, rx) = mpsc::channel();
-    rx
+	let (_tx, rx) = mpsc::channel();
+	rx
 }
 
 pub fn paste_text(text: &str) -> bool {
-    if text.is_empty() {
-        return true;
-    }
+	if text.is_empty() {
+		return true;
+	}
 
-    Command::new("wtype")
-        .arg("--")
-        .arg(text)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+	Command::new("wtype")
+		.arg("--")
+		.arg(text)
+		.status()
+		.map(|s| s.success())
+		.unwrap_or(false)
 }
 
 pub struct RecordingSession {
-    audio: AudioRecorder,
+	audio: AudioRecorder,
 }
 
 impl RecordingSession {
-    pub fn start(device_name: Option<String>) -> Result<Self, String> {
-        let audio = AudioRecorder::start(device_name.as_deref())?;
-        Ok(Self { audio })
-    }
+	pub fn start(device_name: Option<String>) -> Result<Self, String> {
+		let audio = AudioRecorder::start(device_name.as_deref())?;
+		Ok(Self { audio })
+	}
 
-    pub fn stop(self) -> Vec<f32> {
-        self.audio.stop()
-    }
+	pub fn stop(self) -> Vec<f32> {
+		self.audio.stop()
+	}
 }
