@@ -1,6 +1,6 @@
 [package]
 name = "sotto"
-version = "1.2.0"
+version = "1.3.0"
 edition = "2024"
 description = "Local speech-to-text transcription for Linux/Wayland using Whisper"
 license = "MIT"
@@ -14,10 +14,13 @@ adw = { version = "0.8.1", package = "libadwaita" }
 whisper-rs = { version = "0.15.1", features = ["vulkan"] }
 ureq = "3.1.4"
 dirs = "6.0.0"
-cpal = "0.15"
+cpal = "0.17.1"
 voice_activity_detector = "0.2"
 crossbeam-channel = "0.5"
+regex = "1"
 gtk4-layer-shell = "0.7"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+evdev = "0.13.2"
+libc = "0.2"
