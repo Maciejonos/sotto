@@ -672,7 +672,6 @@ fn build_ui(app: &adw::Application) {
 		.maximum_size(600)
 		.margin_start(16)
 		.margin_end(16)
-		.margin_top(12)
 		.build();
 	toast_overlay.set_child(Some(&clamp));
 
